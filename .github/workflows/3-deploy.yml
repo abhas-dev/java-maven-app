@@ -24,13 +24,11 @@ on:
     branches:
       - main
 
-# Variables d'environnement
 env:
-  DOCKER_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/java-maven-app
+  DOCKER_IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}/java-maven-app
   DEPLOY_PATH: /opt/java-maven-app
 
 jobs:
-  # Job de préparation du déploiement
   prepare-deployment:
     name: Prepare Deployment
     runs-on: ubuntu-latest
@@ -62,7 +60,6 @@ jobs:
           echo "name=$ENV" >> $GITHUB_OUTPUT
           echo "🌍 Target environment: $ENV"
 
-  # Job de déploiement avec Docker Compose (local/staging)
   deploy-docker-compose:
     name: Deploy with Docker Compose
     runs-on: ubuntu-latest
@@ -76,7 +73,7 @@ jobs:
       - name: 🔐 Login to DockerHub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       
       - name: 📦 Pull Docker image
@@ -121,13 +118,12 @@ jobs:
           echo "- **Image**: ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.prepare-deployment.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
 
-  # Job de déploiement sur serveur distant (production)
-  deploy-remote-server:
+deploy-remote-server:
     name: Deploy to Remote Server
     runs-on: ubuntu-latest
     needs: [prepare-deployment]
     if: needs.prepare-deployment.outputs.environment == 'production'
-    environment: production # Nécessite une approbation manuelle
+    environment: production
     
     steps:
       - name: 📥 Checkout code
@@ -144,17 +140,17 @@ jobs:
         run: |
           scp -i ~/.ssh/deploy_key \
             docker-compose.yml \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ env.DEPLOY_PATH }}/
+            ${{ vars.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ env.DEPLOY_PATH }}/
       
       - name: 🚀 Deploy on remote server
         run: |
           ssh -i ~/.ssh/deploy_key \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            ${{ vars.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             
             cd ${{ env.DEPLOY_PATH }}
             
             # Login to DockerHub
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}" --password-stdin
             
             # Pull the new image
             docker pull ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.prepare-deployment.outputs.version }}
@@ -199,7 +195,7 @@ jobs:
         run: |
           echo "🔄 Rolling back to previous version..."
           ssh -i ~/.ssh/deploy_key \
-            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            ${{ vars.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
             
             cd ${{ env.DEPLOY_PATH }}
             
@@ -237,7 +233,6 @@ jobs:
           fi
           # Ajoutez ici votre intégration de notification (Slack, Discord, email, etc.)
 
-  # Job de notification finale
   notify:
     name: Send Notifications
     runs-on: ubuntu-latest

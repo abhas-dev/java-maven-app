@@ -11,7 +11,7 @@ on:
   workflow_dispatch: # Permet le déclenchement manuel
 
 env:
-  DOCKER_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/java-maven-app
+  DOCKER_IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}/java-maven-app
   PLATFORMS: linux/amd64,linux/arm64 # Multi-architecture support
 
 jobs:
@@ -57,19 +57,27 @@ jobs:
           workflow_conclusion: success
           name_is_regexp: true
           name: java-maven-app-.*
-          path: target/
+          path: artifact/
           if_no_artifact_found: fail
       
-      # 3. Vérification de la présence du JAR
-      - name: 🔍 Verify JAR file
+      # 3. Vérification et déplacement du JAR
+      - name: 🔍 Verify and move JAR file
         run: |
+          echo "Contents of artifact directory:"
+          ls -lah artifact/
+          
+          # Trouver et déplacer le JAR vers target/
+          mkdir -p target
+          find artifact/ -name "*.jar" -exec mv {} target/ \;
+          
           echo "Contents of target directory:"
           ls -lah target/
+          
           if [ ! -f target/*.jar ]; then
             echo "❌ No JAR file found!"
             exit 1
           fi
-          echo "✅ JAR file found"
+          echo "✅ JAR file found and moved to target/"
       
       # 4. Extraction des métadonnées pour le versioning
       - name: 🏷️ Extract metadata
@@ -114,7 +122,7 @@ jobs:
       - name: 🔐 Login to DockerHub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       
       # 8. Extraction des métadonnées Docker

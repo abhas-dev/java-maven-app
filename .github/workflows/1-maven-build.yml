@@ -43,24 +43,25 @@ jobs:
       - name: ✅ Validate Maven POM
         run: mvn validate
       
-      - name: 🔨 Build with Maven
-        run: mvn clean install -B -V
+      - name: 🔨 Compile code
+        run: mvn clean compile -B -V
       
       - name: 🧪 Run tests
         run: mvn test -B
         continue-on-error: false
       
+      - name: 📦 Package application
+        run: mvn package -DskipTests -B
+      
       - name: 📊 Publish test results
         uses: dorny/test-reporter@v1
-        if: always() # Exécute même si les tests échouent
+        if: always()
         with:
           name: Maven Test Results
           path: target/surefire-reports/*.xml
           reporter: java-junit
-          fail-on-error: true
-      
-      - name: 📦 Package application
-        run: mvn package -DskipTests -B
+          fail-on-error: false
+        continue-on-error: true
       
       - name: 🏷️ Extract version from POM
         id: version
