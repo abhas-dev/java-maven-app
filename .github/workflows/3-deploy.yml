@@ -134,18 +134,18 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ vars.DEPLOY_HOST }} >> ~/.ssh/known_hosts
       
       - name: 📦 Copy deployment files to server
         run: |
           scp -i ~/.ssh/deploy_key \
             docker-compose.yml \
-            ${{ vars.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ env.DEPLOY_PATH }}/
+            ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }}:${{ env.DEPLOY_PATH }}/
       
       - name: 🚀 Deploy on remote server
         run: |
           ssh -i ~/.ssh/deploy_key \
-            ${{ vars.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }} << 'EOF'
             
             cd ${{ env.DEPLOY_PATH }}
             
@@ -178,7 +178,7 @@ jobs:
           ATTEMPT=0
           
           while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-            if curl -f http://${{ secrets.DEPLOY_HOST }}:8080/actuator/health 2>/dev/null; then
+            if curl -f http://${{ vars.DEPLOY_HOST }}:8080/actuator/health 2>/dev/null; then
               echo "✅ Application is healthy on production!"
               exit 0
             fi
@@ -195,7 +195,7 @@ jobs:
         run: |
           echo "🔄 Rolling back to previous version..."
           ssh -i ~/.ssh/deploy_key \
-            ${{ vars.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+            ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }} << 'EOF'
             
             cd ${{ env.DEPLOY_PATH }}
             
@@ -220,7 +220,7 @@ jobs:
           echo "- **Environment**: ${{ needs.prepare-deployment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: ${{ needs.prepare-deployment.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.prepare-deployment.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Host**: ${{ secrets.DEPLOY_HOST }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Host**: ${{ vars.DEPLOY_HOST }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
       
       - name: 📧 Notify deployment status
