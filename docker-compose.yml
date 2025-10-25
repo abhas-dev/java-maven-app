@@ -1,22 +1,16 @@
-version: '3.8'
-
 services:
-  # Application Java Spring Boot
   app:
-    image: ${DOCKERHUB_USERNAME:-your-dockerhub-username}/java-maven-app:${IMAGE_TAG:-latest}
+    image: ${DOCKER_IMAGE_NAME}:${IMAGE_TAG:-latest}
     container_name: java-maven-app
     
-    # Configuration des ports
     ports:
       - "8080:8080"
     
-    # Variables d'environnement
     environment:
       - JAVA_OPTS=-Xmx512m -Xms256m
       - SPRING_PROFILES_ACTIVE=${SPRING_PROFILE:-prod}
       - SERVER_PORT=8080
     
-    # Health check
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -24,10 +18,8 @@ services:
       retries: 3
       start_period: 40s
     
-    # Restart policy
     restart: unless-stopped
     
-    # Limites de ressources
     deploy:
       resources:
         limits:
@@ -37,18 +29,15 @@ services:
           cpus: '0.5'
           memory: 512M
     
-    # Logs configuration
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
     
-    # Networks
     networks:
       - app-network
 
-  # Service de monitoring (optionnel - Prometheus)
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
@@ -66,7 +55,6 @@ services:
     profiles:
       - monitoring
 
-  # Service de visualisation (optionnel - Grafana)
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
@@ -82,14 +70,12 @@ services:
     profiles:
       - monitoring
 
-# Volumes persistants
 volumes:
   prometheus-data:
     driver: local
   grafana-data:
     driver: local
 
-# Networks
 networks:
   app-network:
     driver: bridge

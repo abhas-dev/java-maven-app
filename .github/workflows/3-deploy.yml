@@ -25,7 +25,7 @@ on:
       - main
 
 env:
-  DOCKER_IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}/java-maven-app
+  DOCKER_IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME }}/java-maven-app
   DEPLOY_PATH: /opt/java-maven-app
 
 jobs:
@@ -83,8 +83,8 @@ jobs:
       - name: 🚀 Deploy with Docker Compose
         run: |
           export IMAGE_TAG=${{ needs.prepare-deployment.outputs.version }}
-          docker-compose -f docker-compose.yml down || true
-          docker-compose -f docker-compose.yml up -d
+          docker compose -f docker-compose.yml down || true
+          docker compose -f docker-compose.yml up -d
           
           echo "⏳ Waiting for application to start..."
           sleep 10
@@ -105,7 +105,7 @@ jobs:
           done
           
           echo "❌ Application failed to start!"
-          docker-compose logs
+          docker compose logs
           exit 1
       
       - name: 📋 Deployment summary
@@ -156,12 +156,20 @@ jobs:
             docker pull ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.prepare-deployment.outputs.version }}
             
             # Backup current version (rollback capability)
-            docker tag ${{ env.DOCKER_IMAGE_NAME }}:current ${{ env.DOCKER_IMAGE_NAME }}:rollback || true
+            if docker image inspect ${{ env.DOCKER_IMAGE_NAME }}:current >/dev/null 2>&1; then
+              docker tag ${{ env.DOCKER_IMAGE_NAME }}:current ${{ env.DOCKER_IMAGE_NAME }}:rollback
+              echo "🔙 Previous version backed up as rollback"
+            else
+              echo "ℹ️ No current image found, first deployment"
+            fi
+
             docker tag ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.prepare-deployment.outputs.version }} ${{ env.DOCKER_IMAGE_NAME }}:current
             
             # Deploy with zero-downtime
             export IMAGE_TAG=${{ needs.prepare-deployment.outputs.version }}
-            docker-compose up -d --no-deps --build
+            export DOCKER_IMAGE_NAME=${{ env.DOCKER_IMAGE_NAME }}
+
+            docker compose --profile monitoring up -d --force-recreate
             
             # Wait for health check
             sleep 15
@@ -178,7 +186,7 @@ jobs:
           ATTEMPT=0
           
           while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-            if curl -f http://${{ vars.DEPLOY_HOST }}:8080/actuator/health 2>/dev/null; then
+            if curl -f http://${{ vars.DEPLOY_HOST }}:8080 2>/dev/null; then
               echo "✅ Application is healthy on production!"
               exit 0
             fi
@@ -202,7 +210,7 @@ jobs:
             # Rollback to previous version
             docker tag ${{ env.DOCKER_IMAGE_NAME }}:rollback ${{ env.DOCKER_IMAGE_NAME }}:current
             export IMAGE_TAG=rollback
-            docker-compose up -d --no-deps
+            docker compose up -d --no-deps
             
             echo "✅ Rollback completed!"
           EOF
