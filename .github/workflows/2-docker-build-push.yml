@@ -1,0 +1,200 @@
+name: 2️⃣ Docker Build & Push
+
+on:
+  workflow_run:
+    workflows: ["1️⃣ Maven Build & Test"]
+    types:
+      - completed
+    branches:
+      - main
+      - develop
+  workflow_dispatch: # Permet le déclenchement manuel
+
+env:
+  DOCKER_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/java-maven-app
+  PLATFORMS: linux/amd64,linux/arm64 # Multi-architecture support
+
+jobs:
+  # Job de vérification du workflow précédent
+  check-build:
+    name: Check Maven Build Status
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_run'
+    outputs:
+      build-success: ${{ steps.check.outputs.success }}
+    
+    steps:
+      - name: 🔍 Check if Maven build succeeded
+        id: check
+        run: |
+          if [ "${{ github.event.workflow_run.conclusion }}" == "success" ]; then
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "✅ Maven build succeeded"
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "❌ Maven build failed - stopping Docker build"
+            exit 1
+          fi
+
+  docker-build-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [check-build]
+    if: |
+      always() && 
+      (github.event_name == 'workflow_dispatch' || 
+       needs.check-build.outputs.build-success == 'true')
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      # 2. Téléchargement de l'artifact JAR du workflow précédent
+      - name: 📦 Download JAR artifact
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: 1-maven-build.yml
+          workflow_conclusion: success
+          name_is_regexp: true
+          name: java-maven-app-.*
+          path: target/
+          if_no_artifact_found: fail
+      
+      # 3. Vérification de la présence du JAR
+      - name: 🔍 Verify JAR file
+        run: |
+          echo "Contents of target directory:"
+          ls -lah target/
+          if [ ! -f target/*.jar ]; then
+            echo "❌ No JAR file found!"
+            exit 1
+          fi
+          echo "✅ JAR file found"
+      
+      # 4. Extraction des métadonnées pour le versioning
+      - name: 🏷️ Extract metadata
+        id: meta
+        run: |
+          # Extraire la version du POM
+          VERSION=$(grep -oP '(?<=<version>)[^<]+' pom.xml | head -1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Générer les tags Docker
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          SHORT_SHA=${GITHUB_SHA::7}
+          
+          echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          
+          # Tags: version, version-sha, branch, latest (si main)
+          TAGS="${{ env.DOCKER_IMAGE_NAME }}:${VERSION}"
+          TAGS="${TAGS},${{ env.DOCKER_IMAGE_NAME }}:${VERSION}-${SHORT_SHA}"
+          TAGS="${TAGS},${{ env.DOCKER_IMAGE_NAME }}:${BRANCH_NAME}"
+          
+          if [ "$BRANCH_NAME" == "main" ]; then
+            TAGS="${TAGS},${{ env.DOCKER_IMAGE_NAME }}:latest"
+          fi
+          
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          
+          echo "📋 Docker tags to be created:"
+          echo "$TAGS" | tr ',' '\n'
+      
+      # 5. Configuration de QEMU pour le multi-architecture
+      - name: 🔧 Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      
+      # 6. Configuration de Docker Buildx
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: ${{ env.PLATFORMS }}
+      
+      # 7. Connexion à DockerHub
+      - name: 🔐 Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      # 8. Extraction des métadonnées Docker
+      - name: 🏷️ Docker metadata
+        id: docker-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.meta.outputs.version }}
+            type=raw,value=${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.sha }}
+            type=raw,value=${{ steps.meta.outputs.branch }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+          labels: |
+            org.opencontainers.image.title=Java Maven App
+            org.opencontainers.image.description=Spring Boot application built with Maven
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+      
+      # 9. Build et Push de l'image Docker
+      - name: 🐳 Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.DOCKER_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE_NAME }}:buildcache,mode=max
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            VCS_REF=${{ github.sha }}
+      
+      # 10. Scan de sécurité de l'image (optionnel mais recommandé)
+      - name: 🔒 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+        continue-on-error: true
+      
+      # 11. Upload des résultats du scan
+      - name: 📤 Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+      
+      - name: 📋 Build summary
+        if: always()
+        run: |
+          echo "## 🐳 Docker Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Image Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.meta.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ steps.meta.outputs.branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit SHA**: ${{ steps.meta.outputs.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏷️ Docker Tags" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.docker-meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 Pull Command" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.DOCKER_IMAGE_NAME }}:${{ steps.meta.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      
+      - name: 📧 Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Docker build failed!"
+          echo "Check the logs for more details."
+          # Vous pouvez ajouter ici une intégration Slack, Discord, email, etc.
+    
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+      image-name: ${{ env.DOCKER_IMAGE_NAME }}

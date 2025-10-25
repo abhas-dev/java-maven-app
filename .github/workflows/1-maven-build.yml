@@ -1,0 +1,103 @@
+name: 1️⃣ Maven Build & Test
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch: # Permet le déclenchement manuel
+
+env:
+  JAVA_VERSION: '8'
+  MAVEN_OPTS: '-Xmx1024m'
+
+jobs:
+  build-and-test:
+    name: Build & Test Maven Project
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Récupère tout l'historique pour le versioning
+      
+      - name: ☕ Setup JDK 8
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+      
+      - name: 🔍 Display versions
+        run: |
+          echo "Java version:"
+          java -version
+          echo "Maven version:"
+          mvn -version
+      
+      - name: ✅ Validate Maven POM
+        run: mvn validate
+      
+      - name: 🔨 Build with Maven
+        run: mvn clean install -B -V
+      
+      - name: 🧪 Run tests
+        run: mvn test -B
+        continue-on-error: false
+      
+      - name: 📊 Publish test results
+        uses: dorny/test-reporter@v1
+        if: always() # Exécute même si les tests échouent
+        with:
+          name: Maven Test Results
+          path: target/surefire-reports/*.xml
+          reporter: java-junit
+          fail-on-error: true
+      
+      - name: 📦 Package application
+        run: mvn package -DskipTests -B
+      
+      - name: 🏷️ Extract version from POM
+        id: version
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Application version: $VERSION"
+      
+      - name: 📤 Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: java-maven-app-${{ steps.version.outputs.version }}
+          path: target/*.jar
+          retention-days: 7
+          if-no-files-found: error
+      
+      - name: 📤 Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports/
+            target/site/
+          retention-days: 7
+      
+      - name: 📋 Build summary
+        if: always()
+        run: |
+          echo "## 🎯 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java Version**: ${{ env.JAVA_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact-name: java-maven-app-${{ steps.version.outputs.version }}
