@@ -138,10 +138,20 @@ jobs:
       
       - name: 📦 Copy deployment files to server
         run: |
+          # Créer les dossiers nécessaires
+          ssh -i ~/.ssh/deploy_key \
+            ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }} \
+            "mkdir -p ${{ env.DEPLOY_PATH }}/monitoring"
+
           scp -i ~/.ssh/deploy_key \
             docker-compose.yml \
             ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }}:${{ env.DEPLOY_PATH }}/
-      
+
+          scp -i ~/.ssh/deploy_key -r \
+            monitoring/* \
+            ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }}:${{ env.DEPLOY_PATH }}/monitoring/
+
+          echo "✅ Files copied successfully"
       - name: 🚀 Deploy on remote server
         run: |
           ssh -i ~/.ssh/deploy_key \
